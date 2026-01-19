@@ -404,6 +404,7 @@ class KeyDerivation {
         DerivedKey out{};
 
         std::string password = getPassword();
+        std::cout << "Password created, generating salt...\n\n";
         out.salt = generateSalt();
 
         std::string U = HMAC::compute(password, out.salt);
@@ -632,36 +633,52 @@ class AES {
 
 int main() {
     std::cout << "AES_CBC Encryption demo\n\n";
+    std::cout << "Created derived key\n\n";
 
     // --- Derive key ---
     KeyDerivation kd;
     DerivedKey dk = kd.deriveKey();
 
-    std::cout << "Created derived key\n\n";
+    std::cout << "Using derived key for AES encryption\n\n";
 
     // --- Prepare AES key (256-bit) ---
     uint8_t aesKey[32];
     memcpy(aesKey, dk.key.data(), 32);
 
-    std::cout << "Using derived key for AES encryption\n\n";
+    std::cout << "\nPress Enter to continue...";
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    std::cin.get(); // wait for Enter
+
+    std::cout << "Creating random entropy for the Initialisation Vector (IV)...\n\n";
 
     // --- Generate IV ---
-    BinaryEntropyPool bep;
-    auto ivBytes = bep.get(16 * 8); // 16-byte IV
-    memcpy(iv, ivBytes.data(), 16);
     uint8_t iv[16];
+    BinaryEntropyPool bep;
+    auto ivBytes = bep.get(16 * 8);
+    memcpy(iv, ivBytes.data(), 16);
+
+    std::cout << "\nPress Enter to continue...";
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n'); // discard leftover input
+    std::cin.get();                                                     // wait for Enter
+
+    std::cout << "Creating plaintext string for encyption...\n\n";
 
     // --- Plaintext ---
-    std::string plaintext = "This is a secret message";
-    auto plainBytes = toBytes(plaintext);
+    std::string message = "This is a secret message";
+    std::cout << "This is a secret message";
+    auto messageInBytes = toBytes(message);
 
     // --- Encrypt ---
     AES aes;
-    auto ciphertext = aes.encryptCBC256(plainBytes, aesKey, iv);
+    auto ciphertext = aes.encryptCBC256(messageInBytes, aesKey, iv);
 
     // --- Output ---
-    std::cout << "Plaintext:  " << plaintext << "\n";
+    std::cout << "Plaintext:  " << message << "\n";
     std::cout << "Ciphertext: " << toHex(ciphertext) << "\n";
+
+    std::cout << "\nPress Enter to exit...";
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n'); // discard leftover input
+    std::cin.get();                                                     // wait for Enter
 
     return 0;
 }
