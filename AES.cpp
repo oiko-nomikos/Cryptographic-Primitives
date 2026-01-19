@@ -791,7 +791,7 @@ void encyrptedFile() {
     std::ofstream outFile("encrypted.dat", std::ios::binary);
     if (!outFile) {
         std::cerr << "Failed to open file for writing!\n";
-        return 1;
+        return;
     }
 
     // Write in the format: [16 bytes salt][16 bytes IV][ciphertext]
@@ -818,7 +818,7 @@ void decryptedFile() {
     std::ifstream inFile("encrypted.dat", std::ios::binary);
     if (!inFile) {
         std::cerr << "Failed to open 'encrypted.dat'!\n";
-        return false;
+        return;
     }
 
     // Read salt (16 bytes)
@@ -846,7 +846,7 @@ void decryptedFile() {
 
     // --- Decrypt ---
     AES aes;
-    std::vector<uint8_t> plaintextBytes = aes.decryptCBC(ciphertext, aesKey, 8, 14, iv);
+    std::vector<uint8_t> plaintextBytes = aes.decryptCBC256(ciphertext, aesKey, iv);
 
     // Convert bytes to string
     std::string plaintext(plaintextBytes.begin(), plaintextBytes.end());
