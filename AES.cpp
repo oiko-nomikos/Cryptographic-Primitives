@@ -424,6 +424,23 @@ class KeyDerivation {
         return out;
     }
 
+    DerivedKey deriveKeyFromPassword(const std::string &password, const std::string &salt) {
+        DerivedKey out{};
+        out.salt = salt; // use the existing salt
+
+        std::string U = HMAC::compute(password, out.salt);
+        std::string T = U;
+
+        for (uint32_t i = 1; i < ITERATIONS; ++i) {
+            U = HMAC::compute(password, U);
+            xorInPlace(T, U);
+        }
+
+        out.key = T;
+
+        return out;
+    }
+
   private:
     static constexpr uint32_t ITERATIONS = 100'000;
     static constexpr size_t SALT_BYTES = 16;
@@ -564,6 +581,14 @@ class AES {
         }
     }
 
+    // ===== Padding =====
+    std::vector<byte> pkcs7_pad(const std::vector<byte> &in) {
+        size_t pad = BLOCK_SIZE - (in.size() % BLOCK_SIZE);
+        std::vector<byte> out = in;
+        out.insert(out.end(), pad, static_cast<byte>(pad));
+        return out;
+    }
+
     // ===== Block encryption (generic) =====
     void EncryptBlock(byte *block, const byte *rk, int Nr) {
         AddRoundKey(block, rk);
@@ -578,14 +603,6 @@ class AES {
         SubBytes(block);
         ShiftRows(block);
         AddRoundKey(block, rk + 16 * Nr);
-    }
-
-    // ===== Padding =====
-    std::vector<byte> pkcs7_pad(const std::vector<byte> &in) {
-        size_t pad = BLOCK_SIZE - (in.size() % BLOCK_SIZE);
-        std::vector<byte> out = in;
-        out.insert(out.end(), pad, static_cast<byte>(pad));
-        return out;
     }
 
     // ===== CBC mode (generic) =====
@@ -612,6 +629,102 @@ class AES {
         return out;
     }
 
+    void InvSubBytes(byte *s) {
+        for (int i = 0; i < 16; i++)
+            s[i] = inv_sbox[s[i]];
+    }
+
+    void InvShiftRows(byte *s) {
+        byte t[16];
+        memcpy(t, s, 16);
+
+        s[1] = t[13];
+        s[5] = t[1];
+        s[9] = t[5];
+        s[13] = t[9];
+
+        s[2] = t[10];
+        s[6] = t[14];
+        s[10] = t[2];
+        s[14] = t[6];
+
+        s[3] = t[7];
+        s[7] = t[11];
+        s[11] = t[15];
+        s[15] = t[3];
+    }
+
+    void InvMixColumns(byte *s) {
+        for (int i = 0; i < 4; i++) {
+            int c = i * 4;
+            byte a = s[c], b = s[c + 1], d = s[c + 2], e = s[c + 3];
+
+            s[c] = gmul(a, 0x0e) ^ gmul(b, 0x0b) ^ gmul(d, 0x0d) ^ gmul(e, 0x09);
+            s[c + 1] = gmul(a, 0x09) ^ gmul(b, 0x0e) ^ gmul(d, 0x0b) ^ gmul(e, 0x0d);
+            s[c + 2] = gmul(a, 0x0d) ^ gmul(b, 0x09) ^ gmul(d, 0x0e) ^ gmul(e, 0x0b);
+            s[c + 3] = gmul(a, 0x0b) ^ gmul(b, 0x0d) ^ gmul(d, 0x09) ^ gmul(e, 0x0e);
+        }
+    }
+
+    void DecryptBlock(byte *block, const byte *rk, int Nr) {
+        AddRoundKey(block, rk + 16 * Nr);
+        for (int r = Nr - 1; r >= 1; r--) {
+            InvShiftRows(block);
+            InvSubBytes(block);
+            AddRoundKey(block, rk + 16 * r);
+            InvMixColumns(block);
+        }
+        InvShiftRows(block);
+        InvSubBytes(block);
+        AddRoundKey(block, rk);
+    }
+
+    std::vector<byte> decryptCBC(const std::vector<byte> &ciphertext, const byte *key, int Nk, int Nr, const byte iv[16]) {
+        byte roundKeys[240];
+        KeyExpansion(key, Nk, Nr, roundKeys);
+
+        if (ciphertext.size() % 16 != 0)
+            throw std::runtime_error("Ciphertext not multiple of 16 bytes");
+
+        std::vector<byte> out(ciphertext.size());
+        byte prev[16];
+        memcpy(prev, iv, 16);
+
+        for (size_t i = 0; i < ciphertext.size(); i += 16) {
+            byte block[16];
+            memcpy(block, &ciphertext[i], 16);
+
+            DecryptBlock(block, roundKeys, Nr);
+
+            // XOR with previous ciphertext (or IV)
+            for (int j = 0; j < 16; j++)
+                block[j] ^= prev[j];
+
+            memcpy(&out[i], block, 16);
+            memcpy(prev, &ciphertext[i], 16);
+        }
+
+        // Remove PKCS#7 padding
+        size_t pad = out.back();
+        if (pad < 1 || pad > 16)
+            throw std::runtime_error("Invalid padding");
+        out.resize(out.size() - pad);
+
+        return out;
+    }
+
+    static inline constexpr byte inv_sbox[256] = {
+        0x52, 0x09, 0x6a, 0xd5, 0x30, 0x36, 0xa5, 0x38, 0xbf, 0x40, 0xa3, 0x9e, 0x81, 0xf3, 0xd7, 0xfb, 0x7c, 0xe3, 0x39, 0x82, 0x9b, 0x2f, 0xff, 0x87, 0x34, 0x8e,
+        0x43, 0x44, 0xc4, 0xde, 0xe9, 0xcb, 0x54, 0x7b, 0x94, 0x32, 0xa6, 0xc2, 0x23, 0x3d, 0xee, 0x4c, 0x95, 0x0b, 0x42, 0xfa, 0xc3, 0x4e, 0x08, 0x2e, 0xa1, 0x66,
+        0x28, 0xd9, 0x24, 0xb2, 0x76, 0x5b, 0xa2, 0x49, 0x6d, 0x8b, 0xd1, 0x25, 0x72, 0xf8, 0xf6, 0x64, 0x86, 0x68, 0x98, 0x16, 0xd4, 0xa4, 0x5c, 0xcc, 0x5d, 0x65,
+        0xb6, 0x92, 0x6c, 0x70, 0x48, 0x50, 0xfd, 0xed, 0xb9, 0xda, 0x5e, 0x15, 0x46, 0x57, 0xa7, 0x8d, 0x9d, 0x84, 0x90, 0xd8, 0xab, 0x00, 0x8c, 0xbc, 0xd3, 0x0a,
+        0xf7, 0xe4, 0x58, 0x05, 0xb8, 0xb3, 0x45, 0x06, 0xd0, 0x2c, 0x1e, 0x8f, 0xca, 0x3f, 0x0f, 0x02, 0xc1, 0xaf, 0xbd, 0x03, 0x01, 0x13, 0x8a, 0x6b, 0x3a, 0x91,
+        0x11, 0x41, 0x4f, 0x67, 0xdc, 0xea, 0x97, 0xf2, 0xcf, 0xce, 0xf0, 0xb4, 0xe6, 0x73, 0x96, 0xac, 0x74, 0x22, 0xe7, 0xad, 0x35, 0x85, 0xe2, 0xf9, 0x37, 0xe8,
+        0x1c, 0x75, 0xdf, 0x6e, 0x47, 0xf1, 0x1a, 0x71, 0x1d, 0x29, 0xc5, 0x89, 0x6f, 0xb7, 0x62, 0x0e, 0xaa, 0x18, 0xbe, 0x1b, 0xfc, 0x56, 0x3e, 0x4b, 0xc6, 0xd2,
+        0x79, 0x20, 0x9a, 0xdb, 0xc0, 0xfe, 0x78, 0xcd, 0x5a, 0xf4, 0x1f, 0xdd, 0xa8, 0x33, 0x88, 0x07, 0xc7, 0x31, 0xb1, 0x12, 0x10, 0x59, 0x27, 0x80, 0xec, 0x5f,
+        0x60, 0x51, 0x7f, 0xa9, 0x19, 0xb5, 0x4a, 0x0d, 0x2d, 0xe5, 0x7a, 0x9f, 0x93, 0xc9, 0x9c, 0xef, 0xa0, 0xe0, 0x3b, 0x4d, 0xae, 0x2a, 0xf5, 0xb0, 0xc8, 0xeb,
+        0xbb, 0x3c, 0x83, 0x53, 0x99, 0x61, 0x17, 0x2b, 0x04, 0x7e, 0xba, 0x77, 0xd6, 0x26, 0xe1, 0x69, 0x14, 0x63, 0x55, 0x21, 0x0c, 0x7d};
+
     // === Constants ===
     static inline constexpr byte sbox[256] = {
         0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76, 0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0, 0xad, 0xd4,
@@ -632,7 +745,7 @@ class AES {
 //----------------------------------------------------------------------------------
 //----------------------------------------------------------------------------------
 
-int main() {
+void encyrptedFile() {
     std::cout << "AES_CBC Encryption demo\n\n";
     std::cout << "Creating derived key...\n";
 
@@ -690,6 +803,61 @@ int main() {
     std::cout << "\nPress Enter to exit...";
     std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
     std::cin.get();
+}
+
+void decryptedFile() {
+    std::cout << "AES-CBC Decryption demo\n\n";
+
+    std::string password;
+    std::cout << "Enter password: ";
+    std::cin >> password;
+
+    // --- Read file ---
+    std::ifstream inFile("encrypted.dat", std::ios::binary);
+    if (!inFile) {
+        std::cerr << "Failed to open 'encrypted.dat'!\n";
+        return 1;
+    }
+
+    // Read salt (16 bytes)
+    std::vector<uint8_t> salt(16);
+    inFile.read(reinterpret_cast<char *>(salt.data()), 16);
+
+    // Read IV (16 bytes)
+    uint8_t iv[16];
+    inFile.read(reinterpret_cast<char *>(iv), 16);
+
+    // Read ciphertext (rest of file)
+    std::vector<uint8_t> ciphertext((std::istreambuf_iterator<char>(inFile)), std::istreambuf_iterator<char>());
+
+    inFile.close();
+
+    std::cout << "Read salt, IV, and ciphertext from file.\n";
+
+    // --- Derive key from password + salt ---
+    KeyDerivation kd;
+    DerivedKey dk = kd.deriveKeyFromPassword(password, salt);
+
+    uint8_t aesKey[32];
+    memcpy(aesKey, dk.key.data(), 32);
+
+    // --- Decrypt ---
+    AES aes;
+    std::vector<uint8_t> plaintextBytes = aes.decryptCBC(ciphertext, aesKey, iv);
+
+    // Convert bytes to string
+    std::string plaintext(plaintextBytes.begin(), plaintextBytes.end());
+
+    std::cout << "Decrypted plaintext: " << plaintext << "\n";
+
+    std::cout << "\nPress Enter to exit...";
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    std::cin.get();
+}
+
+int main() {
+    encyrptedFile();
+    decryptedFile();
 
     return 0;
 }
