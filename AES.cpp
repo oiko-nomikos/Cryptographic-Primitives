@@ -633,7 +633,7 @@ class AES {
 
 int main() {
     std::cout << "AES_CBC Encryption demo\n\n";
-    std::cout << "Created derived key\n\n";
+    std::cout << "Creating derived key\n\n";
 
     // --- Derive key ---
     KeyDerivation kd;
