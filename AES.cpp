@@ -37,10 +37,11 @@
 #include <algorithm>
 #include <iostream>
 #include <iomanip>
-#include <random>
 #include <deque>
 #include <mutex>
 #include <chrono>
+#include <fstream>
+#include <limits>
 
 //----------------------------------------------------------------------------------
 //----------------------------------------------------------------------------------
@@ -633,11 +634,11 @@ class AES {
 
 int main() {
     std::cout << "AES_CBC Encryption demo\n\n";
-    std::cout << "Creating derived key\n\n";
+    std::cout << "Creating derived key...\n";
 
     // --- Derive key ---
     KeyDerivation kd;
-    DerivedKey dk = kd.deriveKey();
+    DerivedKey dk = kd.deriveKey(); // dk.key (32 bytes), dk.salt (16 bytes)
 
     std::cout << "Using derived key for AES encryption\n\n";
 
@@ -645,40 +646,50 @@ int main() {
     uint8_t aesKey[32];
     memcpy(aesKey, dk.key.data(), 32);
 
+    // --- Wait for Enter ---
     std::cout << "\nPress Enter to continue...";
     std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-    std::cin.get(); // wait for Enter
-
-    std::cout << "Creating random entropy for the Initialisation Vector (IV)...\n\n";
+    std::cin.get();
 
     // --- Generate IV ---
+    std::cout << "Creating random entropy for the Initialization Vector (IV)...\n\n";
     uint8_t iv[16];
     BinaryEntropyPool bep;
-    auto ivBytes = bep.get(16 * 8);
+    auto ivBytes = bep.get(16 * 8); // 16 bytes = 128 bits
     memcpy(iv, ivBytes.data(), 16);
 
     std::cout << "\nPress Enter to continue...";
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n'); // discard leftover input
-    std::cin.get();                                                     // wait for Enter
-
-    std::cout << "Creating plaintext string for encyption...\n\n";
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    std::cin.get();
 
     // --- Plaintext ---
     std::string message = "This is a secret message";
-    std::cout << "This is a secret message";
     auto messageInBytes = toBytes(message);
+    std::cout << "Plaintext: " << message << "\n";
 
     // --- Encrypt ---
     AES aes;
     auto ciphertext = aes.encryptCBC256(messageInBytes, aesKey, iv);
-
-    // --- Output ---
-    std::cout << "Plaintext:  " << message << "\n";
     std::cout << "Ciphertext: " << toHex(ciphertext) << "\n";
 
+    // --- Save to file ---
+    std::ofstream outFile("encrypted.dat", std::ios::binary);
+    if (!outFile) {
+        std::cerr << "Failed to open file for writing!\n";
+        return 1;
+    }
+
+    // Write in the format: [16 bytes salt][16 bytes IV][ciphertext]
+    outFile.write(reinterpret_cast<const char *>(dk.salt.data()), dk.salt.size());
+    outFile.write(reinterpret_cast<const char *>(iv), sizeof(iv));
+    outFile.write(reinterpret_cast<const char *>(ciphertext.data()), ciphertext.size());
+
+    outFile.close();
+    std::cout << "Saved encrypted message to 'encrypted.dat'\n";
+
     std::cout << "\nPress Enter to exit...";
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n'); // discard leftover input
-    std::cin.get();                                                     // wait for Enter
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    std::cin.get();
 
     return 0;
 }
