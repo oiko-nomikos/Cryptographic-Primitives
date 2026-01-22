@@ -83,26 +83,27 @@
 #include <chrono>
 #include <fstream>
 #include <limits>
+#include <filesystem>
+#include <stdexcept>
 
 //----------------------------------------------------------------------------------
 //----------------------------------------------------------------------------------
 //----------------------------------------------------------------------------------
 
-std::vector<uint8_t> toBytes(const std::string &s) {
-    return std::vector<uint8_t>(s.begin(), s.end());
-}
+namespace fs = std::filesystem;
+const fs::path APP_DIR = "program_data";
 
-std::string toHex(const std::vector<uint8_t> &data) {
-    static const char *hex = "0123456789abcdef";
-    std::string out;
-    out.reserve(data.size() * 2);
-
-    for (uint8_t b : data) {
-        out.push_back(hex[b >> 4]);
-        out.push_back(hex[b & 0x0F]);
+void ensureAppDirectory() {
+    if (!fs::exists(APP_DIR)) {
+        fs::create_directory(APP_DIR);
     }
-    return out;
 }
+
+const fs::path file_1 = APP_DIR / "btc_history.txt";
+const fs::path file_2 = APP_DIR / "open_positions.txt";
+const fs::path file_3 = APP_DIR / "calendar_pnl.txt";
+const fs::path file_4 = APP_DIR / "twitter_config.txt";
+const fs::path file_5 = APP_DIR / "debug_file.log";
 
 //----------------------------------------------------------------------------------
 //----------------------------------------------------------------------------------
@@ -341,6 +342,12 @@ class RandomNumberGenerator {
     }
 };
 
+inline std::string sha256Binary(const std::string &data) {
+    CRYPTO::SHA256 sha;
+    sha.update(data);
+    return sha.digestBinary(); // directly returns 256-bit binary string
+}
+
 //----------------------------------------------------------------------------------
 //----------------------------------------------------------------------------------
 //----------------------------------------------------------------------------------
@@ -413,13 +420,13 @@ class HMAC {
 //----------------------------------------------------------------------------------
 //----------------------------------------------------------------------------------
 
-struct DerivedKey {
-    std::vector<uint8_t> salt; // 16 bytes
-    std::string key;           // 32 bytes of binary data (for AES-256)
-};
-
 class KeyDerivation {
   public:
+    struct DerivedKey {
+        std::vector<uint8_t> salt; // 16 bytes
+        std::string key;           // 32 bytes of binary data (for AES-256)
+    };
+
     DerivedKey deriveKey() {
         DerivedKey out{};
 
@@ -466,19 +473,8 @@ class KeyDerivation {
         return out;
     }
 
-  private:
-    static constexpr uint32_t ITERATIONS = 100'000;
-    static constexpr size_t SALT_BYTES = 16;
-
-    std::string getPassword() {
-        std::string password;
-        std::cout << "Enter password: ";
-        std::cin >> password;
-        return password;
-    }
-
     // Convert bit string "101010..." → 16 actual bytes
-    std::vector<uint8_t> bits_string_to_bytes(const std::string &bits, size_t wanted_bytes) {
+    std::vector<uint8_t> bitStringToBytes(const std::string &bits, size_t wanted_bytes) {
         if (bits.size() < wanted_bytes * 8) {
             throw std::runtime_error("Not enough bits for requested byte length");
         }
@@ -493,10 +489,21 @@ class KeyDerivation {
         return result;
     }
 
+  private:
+    static constexpr uint32_t ITERATIONS = 100'000;
+    static constexpr size_t SALT_BYTES = 16;
+
+    std::string getPassword() {
+        std::string password;
+        std::cout << "Enter password: ";
+        std::cin >> password;
+        return password;
+    }
+
     std::vector<uint8_t> generateSalt() {
         BinaryEntropyPool bep;
-        std::string bit_string = bep.get(SALT_BYTES * 8); // get 128 bits as "1010..."
-        return bits_string_to_bytes(bit_string, SALT_BYTES);
+        std::string bitString = bep.get(SALT_BYTES * 8); // get 128 bits as "1010..."
+        return bitStringToBytes(bitString, SALT_BYTES);
     }
 
     void xorInPlace(std::string &a, const std::string &b) {
@@ -544,7 +551,17 @@ class AES {
     std::vector<byte> decryptCBC192(const std::vector<byte> &plaintext, const byte key[24], const byte iv[16]) { return decryptCBC(plaintext, key, 6, 12, iv); }
     std::vector<byte> decryptCBC256(const std::vector<byte> &plaintext, const byte key[32], const byte iv[16]) { return decryptCBC(plaintext, key, 8, 14, iv); }
 
+    // Generate random IV (16 bytes) using entropy pool
+    std::array<AES::byte, 16> generateIV(BinaryEntropyPool &bep) {
+        std::string ivBits = bep.get(128); // 128 bits = 16 bytes
+        std::vector<uint8_t> ivBytes = kd.bitStringToBytes(ivBits, 16);
+        std::array<AES::byte, 16> iv{};
+        std::copy(ivBytes.begin(), ivBytes.end(), iv.begin());
+        return iv;
+    }
+
   private:
+    KeyDerivation kd;
     static constexpr int BLOCK_SIZE = 16;
 
     // ===== Core AES operations =====
@@ -847,127 +864,142 @@ class AES {
 //----------------------------------------------------------------------------------
 //----------------------------------------------------------------------------------
 
-void encyrptedFile() {
-    std::cout << "AES_CBC Encryption demo\n\n";
-    std::cout << "Creating derived key...\n";
+class FileStorage {
+  public:
+    void encryptAppFiles() {
+        // --- Derive New key ---
+        std::cout << "Creating new key for AES encryption\n\n";
+        KeyDerivation kd;
+        KeyDerivation::DerivedKey dk = kd.deriveKey(); // dk.key (32 bytes), dk.salt (16 bytes)
+        std::cout << "Using derived key for AES encryption\n\n";
 
-    // --- Derive key ---
+        // --- Prepare AES key (256-bit) ---
+        uint8_t aesKey[32];
+        memcpy(aesKey, dk.key.data(), 32);
+
+        // --- Wait for Enter ---
+        std::cout << "\nPress Enter to continue...";
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        std::cin.get();
+
+        std::vector<fs::path> files = {file_1, file_2, file_3, file_4, file_5};
+
+        for (const auto &srcPath : files) {
+            if (!fs::exists(srcPath)) {
+                std::cout << "Skipping missing file: " << srcPath << "\n";
+                continue;
+            }
+
+            auto plaintext = readFile(srcPath);
+            auto iv = aes.generateIV(bep);
+
+            uint8_t key[32];
+            std::copy(dk.key.begin(), dk.key.end(), key);
+
+            auto ciphertext = aes.encryptCBC256(plaintext, key, iv.data());
+
+            // Save format: salt (16) + iv (16) + ciphertext
+            fs::path encPath = srcPath.string() + ".enc";
+            std::ofstream out(encPath, std::ios::binary);
+            out.write(reinterpret_cast<const char *>(dk.salt.data()), dk.salt.size());
+            out.write(reinterpret_cast<const char *>(iv.data()), 16);
+            out.write(reinterpret_cast<const char *>(ciphertext.data()), ciphertext.size());
+
+            std::cout << "Encrypted: " << srcPath << " → " << encPath << "\n";
+        }
+    }
+
+    void decryptAppFiles() {
+        std::vector<fs::path> encFiles;
+        for (const auto &entry : fs::directory_iterator(APP_DIR)) {
+            if (entry.path().extension() == ".enc") {
+                encFiles.push_back(entry.path());
+            }
+        }
+
+        if (encFiles.empty()) {
+            std::cout << "No encrypted files found.\n";
+            return;
+        }
+
+        std::string password;
+        std::cout << "Enter password: ";
+        std::getline(std::cin, password);
+
+        for (const auto &encPath : encFiles) {
+            std::ifstream in(encPath, std::ios::binary);
+            if (!in) {
+                std::cout << "Failed to open: " << encPath << "\n";
+                continue;
+            }
+
+            // --- Read salt ---
+            std::vector<uint8_t> salt(16);
+            in.read(reinterpret_cast<char *>(salt.data()), 16);
+
+            // --- Read IV ---
+            std::array<uint8_t, 16> iv{};
+            in.read(reinterpret_cast<char *>(iv.data()), 16);
+
+            // --- Read ciphertext ---
+            std::vector<uint8_t> ciphertext((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+            // --- Derive key ---
+            auto dk = kd.deriveKeyFromPassword(password, salt);
+
+            uint8_t key[32];
+            std::copy(dk.key.begin(), dk.key.end(), key);
+
+            // --- Decrypt ---
+            auto plaintextBytes = aes.decryptCBC256(ciphertext, key, iv.data());
+
+            fs::path origPath = encPath;
+            origPath.replace_extension("");
+            writeFile(origPath, plaintextBytes);
+
+            std::cout << "Decrypted: " << encPath << " → " << origPath << "\n";
+        }
+    }
+
+  private:
     KeyDerivation kd;
-    DerivedKey dk = kd.deriveKey(); // dk.key (32 bytes), dk.salt (16 bytes)
-
-    std::cout << "Using derived key for AES encryption\n\n";
-
-    // --- Prepare AES key (256-bit) ---
-    uint8_t aesKey[32];
-    memcpy(aesKey, dk.key.data(), 32);
-
-    // --- Wait for Enter ---
-    std::cout << "\nPress Enter to continue...";
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-    std::cin.get();
-
-    // --- Generate IV ---
-    std::cout << "Creating random entropy for the Initialization Vector (IV)...\n\n";
-    uint8_t iv[16];
+    AES aes;
     BinaryEntropyPool bep;
-    auto ivBytes = bep.get(16 * 8); // 16 bytes = 128 bits
-    memcpy(iv, ivBytes.data(), 16);
 
-    std::cout << "\nPress Enter to continue...";
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-    std::cin.get();
+    // Helper: read entire file into vector<byte>
+    std::vector<AES::byte> readFile(const fs::path &path) {
+        std::ifstream file(path, std::ios::binary | std::ios::ate);
+        if (!file)
+            throw std::runtime_error("Cannot open file: " + path.string());
 
-    // --- Plaintext ---
-    std::string message = "This is a secret message";
-    auto messageInBytes = toBytes(message);
-    std::cout << "Plaintext: " << message << "\n";
+        auto size = file.tellg();
+        std::vector<AES::byte> buffer(size);
 
-    // --- Encrypt ---
-    AES aes;
-    auto ciphertext = aes.encryptCBC256(messageInBytes, aesKey, iv);
-    std::cout << "Ciphertext: " << toHex(ciphertext) << "\n";
-
-    // --- Save to file ---
-    std::ofstream outFile("encrypted.dat", std::ios::binary);
-    if (!outFile) {
-        std::cerr << "Failed to open file for writing!\n";
-        return;
+        file.seekg(0, std::ios::beg);
+        file.read(reinterpret_cast<char *>(buffer.data()), size);
+        return buffer;
     }
 
-    // Write in the format: [16 bytes salt][16 bytes IV][ciphertext]
-    outFile.write(reinterpret_cast<const char *>(dk.salt.data()), dk.salt.size());
-    outFile.write(reinterpret_cast<const char *>(iv), sizeof(iv));
-    outFile.write(reinterpret_cast<const char *>(ciphertext.data()), ciphertext.size());
+    // Helper: write vector<byte> to file
+    void writeFile(const fs::path &path, const std::vector<AES::byte> &data) {
+        std::ofstream file(path, std::ios::binary);
+        if (!file)
+            throw std::runtime_error("Cannot write file: " + path.string());
 
-    outFile.close();
-    std::cout << "Saved encrypted message to 'encrypted.dat'\n";
-
-    std::cout << "\nPress Enter to exit...";
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-    std::cin.get();
-}
-
-void decryptedFile() {
-    std::cout << "AES-CBC Decryption demo\n\n";
-
-    std::string password;
-    std::cout << "Enter password: ";
-    std::cin >> password;
-
-    // --- Read file ---
-    std::ifstream inFile("encrypted.dat", std::ios::binary);
-    if (!inFile) {
-        std::cerr << "Failed to open 'encrypted.dat'!\n";
-        return;
+        file.write(reinterpret_cast<const char *>(data.data()), data.size());
     }
-
-    // Read salt (16 bytes)
-    std::vector<uint8_t> salt(16);
-    inFile.read(reinterpret_cast<char *>(salt.data()), 16);
-
-    std::cout << "Salt as hex: ";
-    for (auto b : salt)
-        printf("%02x ", b);
-    std::cout << "\nSalt as string: ";
-    for (auto b : salt)
-        std::cout << (char)b;
-    std::cout << "\n";
-
-    // Read IV (16 bytes)
-    uint8_t iv[16];
-    inFile.read(reinterpret_cast<char *>(iv), 16);
-
-    // Read ciphertext (rest of file)
-    std::vector<uint8_t> ciphertext((std::istreambuf_iterator<char>(inFile)), std::istreambuf_iterator<char>());
-
-    inFile.close();
-
-    std::cout << "Read salt, IV, and ciphertext from file.\n";
-
-    // --- Derive key from password + salt ---
-    KeyDerivation kd;
-    DerivedKey dk = kd.deriveKeyFromPassword(password, salt);
-
-    uint8_t aesKey[32];
-    memcpy(aesKey, dk.key.data(), 32);
-
-    // --- Decrypt ---
-    AES aes;
-    std::vector<uint8_t> plaintextBytes = aes.decryptCBC256(ciphertext, aesKey, iv);
-
-    // Convert bytes to string
-    std::string plaintext(plaintextBytes.begin(), plaintextBytes.end());
-
-    std::cout << "Decrypted plaintext: " << plaintext << "\n";
-
-    std::cout << "\nPress Enter to exit...";
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-    std::cin.get();
-}
+};
 
 int main() {
-    encyrptedFile();
-    decryptedFile();
+    ensureAppDirectory(); // Create program_data if missing
+
+    FileStorage storage;
+    storage.encryptAppFiles();
+    storage.decryptAppFiles();
+
+    std::cout << "\nPress Enter to exit...";
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    std::cin.get();
 
     return 0;
 }
