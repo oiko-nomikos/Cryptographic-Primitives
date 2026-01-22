@@ -46,7 +46,6 @@
 //   • Timing-based entropy collection & randomness pool
 //   • HMAC wrapper logic
 //   • File encryption/decryption wrapper
-//   • PKCS#7 padding
 //   • Command-line interface & I/O
 //
 //   — are original work by oiko-nomikos.
