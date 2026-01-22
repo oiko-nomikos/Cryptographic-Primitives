@@ -40,12 +40,16 @@
 // No third-party copyrighted code is included for these primitives.
 // They are educational/reference implementations only.
 //
-// The remaining functionality:
-//  - key derivation logic
-//  - random number generator
-//  - entropy collection
-// along with the file I/O and command-line interface, etc.
-// is original work by oiko-nomikos.
+// All other parts of this program — including:
+//
+//   • PBKDF-style key derivation (HKDF-like construction)
+//   • Timing-based entropy collection & randomness pool
+//   • HMAC wrapper logic
+//   • File encryption/decryption wrapper
+//   • PKCS#7 padding
+//   • Command-line interface & I/O
+//
+//   — are original work by oiko-nomikos.
 //
 // CRITICAL WARNING:
 // -----------------------------------------------------------------------------
