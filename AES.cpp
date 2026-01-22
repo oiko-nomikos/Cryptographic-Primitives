@@ -88,14 +88,6 @@
 //----------------------------------------------------------------------------------
 //----------------------------------------------------------------------------------
 
-/*
-void printHex(const std::vector<uint8_t> &data) {
-    for (uint8_t b : data)
-        std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(b);
-    std::cout << std::dec << '\n';
-}
-*/
-
 std::vector<uint8_t> toBytes(const std::string &s) {
     return std::vector<uint8_t>(s.begin(), s.end());
 }
