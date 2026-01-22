@@ -40,8 +40,11 @@
 // No third-party copyrighted code is included for these primitives.
 // They are educational/reference implementations only.
 //
-// The remaining functionality (key derivation logic, random number generator,
-// entropy collection, file I/O, command-line interface, etc.)
+// The remaining functionality:
+//  - key derivation logic
+//  - random number generator
+//  - entropy collection
+// along with the file I/O and command-line interface, etc.
 // is original work by oiko-nomikos.
 //
 // CRITICAL WARNING:
@@ -57,6 +60,7 @@
 //   OpenSSL, libsodium, cryptography (Python), Bouncy Castle, etc.
 //
 // If you find a bug or weakness — please report it responsibly.
+// -----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------------
 //----------------------------------------------------------------------------------
