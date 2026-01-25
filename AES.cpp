@@ -1125,8 +1125,12 @@ int main() {
     ensureAppFiles();
     FileStorage storage;
 
+    std::cout << "\nProgram has started - Press Enter to Encrypt files...";
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    std::cin.get();
+
     // On startup - run once
-    std::cout << "\nEncrypt files...";
+    std::cout << "\nEncrypting files...";
     storage.encryptAppFiles(true);
 
     std::cout << "\nPress Enter to Decrypt files...";
@@ -1134,13 +1138,17 @@ int main() {
     std::cin.get();
 
     // when running
-    std::cout << "\nDecrypt files...";
+    std::cout << "\nDecrypting files...";
     storage.decryptAppFiles();
 
     // ===== application runs here =====
 
+    std::cout << "\nPress Enter to Re-Encrypt files wih same Key...";
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    std::cin.get();
+
     // On shutdown
-    std::cout << "\nEncrypt files...";
+    std::cout << "\nEncrypting files...";
     storage.encryptAppFiles(false);
 
     std::cout << "\nPress Enter to exit...";
